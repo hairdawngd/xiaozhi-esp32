@@ -18,7 +18,10 @@
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
 
+#include "boards/common/esp32_music.h"
+
 #define TAG "MCP"
+#define DEFAULT_TOOLCALL_STACK_SIZE 6144
 
 McpServer::McpServer() {
 }
@@ -74,6 +77,65 @@ void McpServer::AddCommonTools() {
                 uint8_t brightness = static_cast<uint8_t>(properties["brightness"].value<int>());
                 backlight->SetBrightness(brightness, true);
                 return true;
+            });
+    }
+
+    // Music
+    auto music = board.GetMusic();
+    if (music) {
+        AddTool("self.music.play_song",
+            "播放指定的歌曲。当用户要求播放音乐时使用此工具，会自动获取歌曲详情并开始流式播放。\n"
+            "参数:\n"
+            "  `song_name`: 要播放的歌曲名称（必需）。\n"
+            "  `artist_name`: 要播放的歌曲艺术家名称（可选，默认为空字符串）。\n"
+            "返回:\n"
+            "  播放状态信息，不需确认，立刻播放歌曲。",
+            PropertyList({
+                Property("song_name", kPropertyTypeString),//歌曲名称（必需）
+                Property("artist_name", kPropertyTypeString, "")//艺术家名称（可选，默认为空字符串）
+            }),
+            [music](const PropertyList& properties) -> ReturnValue {
+                auto song_name = properties["song_name"].value<std::string>();
+                auto artist_name = properties["artist_name"].value<std::string>();
+                
+                if (!music->Download(song_name, artist_name)) {
+                    return "{\"success\": false, \"message\": \"获取音乐资源失败\"}";
+                }
+                auto download_result = music->GetDownloadResult();
+                ESP_LOGI(TAG, "Music details result: %s", download_result.c_str());
+                return "{\"success\": true, \"message\": \"音乐开始播放\"}";
+            });
+
+        AddTool("self.music.set_display_mode",
+            "设置音乐播放时的显示模式。可以选择显示频谱或歌词，比如用户说‘打开频谱’或者‘显示频谱’，‘打开歌词’或者‘显示歌词’就设置对应的显示模式。\n"
+            "参数:\n"
+            "  `mode`: 显示模式，可选值为 'spectrum'（频谱）或 'lyrics'（歌词）。\n"
+            "返回:\n"
+            "  设置结果信息。",
+            PropertyList({
+                Property("mode", kPropertyTypeString)//显示模式: "spectrum" 或 "lyrics"
+            }),
+            [music](const PropertyList& properties) -> ReturnValue {
+                auto mode_str = properties["mode"].value<std::string>();
+                
+                // 转换为小写以便比较
+                std::transform(mode_str.begin(), mode_str.end(), mode_str.begin(), ::tolower);
+                
+                if (mode_str == "spectrum" || mode_str == "频谱") {
+                    // 设置为频谱显示模式
+                    auto esp32_music = static_cast<Esp32Music*>(music);
+                    esp32_music->SetDisplayMode(Esp32Music::DISPLAY_MODE_SPECTRUM);
+                    return "{\"success\": true, \"message\": \"已切换到频谱显示模式\"}";
+                } else if (mode_str == "lyrics" || mode_str == "歌词") {
+                    // 设置为歌词显示模式
+                    auto esp32_music = static_cast<Esp32Music*>(music);
+                    esp32_music->SetDisplayMode(Esp32Music::DISPLAY_MODE_LYRICS);
+                    return "{\"success\": true, \"message\": \"已切换到歌词显示模式\"}";
+                } else {
+                    return "{\"success\": false, \"message\": \"无效的显示模式，请使用 'spectrum' 或 'lyrics'\"}";
+                }
+                
+                return "{\"success\": false, \"message\": \"设置显示模式失败\"}";
             });
     }
 
